@@ -92,18 +92,20 @@ def prefix_formater(prefix):
 		return "\nPrefix: \\\"" + prefix + "\\\""
 
 def inbound_routes():
-	things.append("subgraph cluster_inbound {")
-	things.append("label = \"inbound\";");
+	#things.append("subgraph cluster_inbound {")
+	#things.append("label = \"inbound\";");
 	
 	for (extension, destination, description, grppre) in query("extension, destination, description, grppre", "incoming"):
 		# thing
 		if extension == "":
 			extension = "ANY"
-		things.append(thing_formater_label(extension, extension + "\n" + description + prefix_formater(grppre)))
+		things.append(thing_formater_label_extra(extension, extension + "\n" + description + prefix_formater(grppre), "shape=cds,margin=0.2,style=filled,fillcolor=darkolivegreen1"))
 		# connection
-		connections.append(connection_formater(extension, destination))
+		connections.append(connection_formater_extra(extension, destination, ""))
+		# Vom Startobjekt aus alle Inboundrouten starten
+		#connections.append("Inbound -> " + extension + " [weight=0]")
 	
-	things.append("}")
+	#things.append("}")
 	
 	return
 
@@ -145,24 +147,27 @@ def timeconditions():
 def queues():
 	for(extension, descr, dest, grppre, joinannounce_id) in query("extension, descr, dest, grppre, joinannounce_id", "queues_config"):
 		thing = "ext-queues-" + str(extension)
+		thing_prefix = prefix_formater(grppre)
 		# thing
-                things.append(thing_formater_label(thing, extension + "\nQueue " + descr + prefix_formater(grppre)))
+                things.append(thing_formater_label_extra(thing, extension + "\nQueue " + descr + thing_prefix, "shape=folder"))
 		#connections
 		# Memeber
 		for (queue_id, keyword, data) in query2("id, keyword, data", "queues_details", "where id=" + extension + " and keyword='member'"):
 			connections.append(connection_formater(thing, data))
 		# Announcement
 		if joinannounce_id > 0:
-			connections.append(connection_formater_extra(thing, "app-announcement-" + str(joinannounce_id), "color=lightblue, arrowhead=none, constraint=false, style=dotted"))
+			connections.append(connection_formater_extra(thing, "app-announcement-" + str(joinannounce_id), "weight=0, color=lightblue, arrowhead=none, style=dotted"))
 		# Failover
-		connections.append(connection_formater_extra(thing, dest, "label=\"failover\", color=blue"))
+		connections.append(connection_formater_extra(thing, dest, "label=\"failover\", color=blue, style=dotted"))
 	return
 
 def extensions():
+	#things.append("subgraph cluster_ext {")
+        #things.append("label = \"Extensions\";");
 	for user in query("*", "users"):
 		# thing
 		thing = "ext-local-" + user[0]
-		things.append(thing_formater_label(thing, user[0] + "\n" + user[2])) 
+		things.append(thing_formater_label_extra(thing, user[0] + "\n" + user[2], "fillcolor=grey, shape=box, style=\"filled\"")) 
 		#connections
 		noanswer_dest = user[12]
 		if noanswer_dest != "":
@@ -173,6 +178,7 @@ def extensions():
 		chanunavail_dest = user[14]
 		if chanunavail_dest != "":
 			connections.append(connection_formater(thing, chanunavail_dest))
+	#things.append("}")
 
 # Hier passierts
 graph_start()
