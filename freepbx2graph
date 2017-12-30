@@ -1,0 +1,190 @@
+#!/usr/bin/python
+#
+# (c) 2017 Alexander Schulz
+#
+#
+
+import mysql.connector
+from mysql.connector import errorcode
+
+cnx = []
+things = []
+connections = []
+
+
+def connect():
+	try:
+		con = mysql.connector.connect(user='root', database='asterisk')
+		cnx.append(con)
+		return con
+	
+	except mysql.connector.Error as err:
+		if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
+			print("Something is wrong with your user name or password")
+		elif err.errno == errorcode.ER_BAD_DB_ERROR:
+			print("Database does not exist")
+		else:
+			print(err)
+		return 0
+
+def graph_start():
+	print("digraph asterisk {")
+	print("rankdir=LR;")
+	return
+
+def graph_end():
+	print("}")
+	return
+
+def query(columns, table):
+	query = ("select " + columns + " from " + table)
+	cursor = connect().cursor()
+        cursor.execute(query)
+	return cursor;
+
+def query2(columns, table, extra):
+        query = ("select " + columns + " from " + table + " " + extra)
+        cursor = connect().cursor()
+        cursor.execute(query)
+	return cursor
+
+def print_graph():
+	for t in things:
+		print t
+	for c in connections:
+		print c
+	return
+
+def destination_formater(dest):
+	if dest.startswith("app-daynight"):
+                return "app-daynight-" + dest.split(',',2)[1]
+	if dest.startswith("ext-queues"):
+		return "ext-queues-" + dest.split(',',2)[1]
+	if dest.startswith("ext-local"):
+		return "ext-local-" + dest.split(',',2)[1]
+	if dest.startswith("timeconditions"):
+		return "timeconditions-" + dest.split(',',2)[1]
+	if dest.startswith("Local/"):
+		return "ext-local-" + dest[6:9]
+	if dest.startswith("from-did-direct"):
+		return "ext-local-" + dest.split(',',2)[1]
+	return dest.split(',',1)[0]
+
+def connection_formater(start, end):
+	return "\"" + start + "\" -> \"" + destination_formater(end) + "\";"
+
+def connection_formater_extra(start, end, extra):
+	return "\"" + start + "\" -> \"" + destination_formater(end) + "\" [" + extra + "];"
+
+def connection_formater_label(start, end, label):
+	return connection_formater_extra(start, end, "label=\"" + label + "\"")
+
+def thing_formater_label(thing, label):
+        return "\"" + thing + "\" [label=\"" + label + "\"];"
+
+def thing_formater_label_extra(thing, label, extra):
+	return "\"" + thing + "\" [label=\"" + label + "\" " + extra + "];"
+
+def prefix_formater(prefix):
+	if prefix == "":
+                return ""
+        else:
+		return "\nPrefix: \\\"" + prefix + "\\\""
+
+def inbound_routes():
+	things.append("subgraph cluster_inbound {")
+	things.append("label = \"inbound\";");
+	
+	for (extension, destination, description, grppre) in query("extension, destination, description, grppre", "incoming"):
+		# thing
+		if extension == "":
+			extension = "ANY"
+		things.append(thing_formater_label(extension, extension + "\n" + description + prefix_formater(grppre)))
+		# connection
+		connections.append(connection_formater(extension, destination))
+	
+	things.append("}")
+	
+	return
+
+def announcements():
+	for (announcement_id, description, post_dest) in query("announcement_id, description, post_dest", "announcement"):
+		announcement = "app-announcement-" + str(announcement_id)
+		# thing
+		things.append(thing_formater_label(announcement, "Announcement\n" + description))
+		# connection
+		connections.append(connection_formater(announcement, post_dest))
+	return
+
+def daynight():
+	for count in query2("ext", "daynight", "group by ext"):
+		# thing
+		thing = "app-daynight-" + count[0]
+		for desc in query2("dest", "daynight", "where ext=" + count[0] + " and dmode='fc_description'"):
+			thing_label = "DayNight\n" + desc[0]
+		things.append(thing_formater_label(thing, thing_label))
+		#connection
+		for (dmode, desc) in query2("dmode, dest", "daynight", "where ext=" + count[0] + " and dmode in ('day', 'night')"):
+			if dmode == "day":
+				color="green"
+			else:
+				color="red"
+                        connections.append(connection_formater_extra(thing, desc, "label=\"" + dmode + "\", color="+ color))
+	return
+
+def timeconditions():
+	for (timeconditions_id, displayname, time, truegoto, falsegoto) in query("timeconditions_id, displayname, time, truegoto, falsegoto", "timeconditions"):
+                timecondition = "timeconditions-" + str(timeconditions_id)
+                # thing
+                things.append(thing_formater_label(timecondition, "Timecondition\n" +  displayname))
+                # connection
+                connections.append(connection_formater_extra(timecondition, truegoto, "label=\"true\", color=green"))
+		connections.append(connection_formater_extra(timecondition, falsegoto, "label=\"false\", color=red"))
+	return
+
+def queues():
+	for(extension, descr, dest, grppre, joinannounce_id) in query("extension, descr, dest, grppre, joinannounce_id", "queues_config"):
+		thing = "ext-queues-" + str(extension)
+		# thing
+                things.append(thing_formater_label(thing, extension + "\nQueue " + descr + prefix_formater(grppre)))
+		#connections
+		# Memeber
+		for (queue_id, keyword, data) in query2("id, keyword, data", "queues_details", "where id=" + extension + " and keyword='member'"):
+			connections.append(connection_formater(thing, data))
+		# Announcement
+		if joinannounce_id > 0:
+			connections.append(connection_formater_extra(thing, "app-announcement-" + str(joinannounce_id), "color=lightblue, arrowhead=none, constraint=false, style=dotted"))
+		# Failover
+		connections.append(connection_formater_extra(thing, dest, "label=\"failover\", color=blue"))
+	return
+
+def extensions():
+	for user in query("*", "users"):
+		# thing
+		thing = "ext-local-" + user[0]
+		things.append(thing_formater_label(thing, user[0] + "\n" + user[2])) 
+		#connections
+		noanswer_dest = user[12]
+		if noanswer_dest != "":
+			connections.append(connection_formater_extra(thing, noanswer_dest, "constraint=false"))
+		busy_dest = user[13]
+		if busy_dest != "":
+			connections.append(connection_formater_extra(thing, busy_dest, "constraint=false"))
+		chanunavail_dest = user[14]
+		if chanunavail_dest != "":
+			connections.append(connection_formater(thing, chanunavail_dest))
+
+# Hier passierts
+graph_start()
+
+inbound_routes()
+announcements()
+daynight()
+timeconditions()
+queues()
+extensions()
+
+print_graph()
+graph_end()
+
+
